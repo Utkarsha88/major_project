@@ -1,6 +1,6 @@
+
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <math.h>
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -10,12 +10,10 @@
    WIFI
 ===================================================== */
 
-const char *ssid = "nrb116_fpkhr";
-const char *password = "Acharya116@";
+const char* ssid = "nrb116_fpkhr";
+const char* password = "Acharya116@";
 
-const char *server =
-    "http://192.168.1.88:5000/api/v1/sensor-data";
-const char *apiKey = "major-project-secret-key873468734r";
+const char* server = "http://192.168.1.99:5000/predict";
 
 /* =====================================================
    BME680
@@ -30,11 +28,11 @@ Adafruit_BME680 bme;
    TCS3200
 ===================================================== */
 
-#define S0 33
-#define S1 32
-#define S2 23
-#define S3 19
-#define sensorOut 35
+#define S0 14
+#define S1 27
+#define S2 26
+#define S3 25
+#define sensorOut 33
 
 /* =====================================================
    COLOR CALIBRATION
@@ -76,13 +74,6 @@ unsigned long lastBMERead = 0;
 unsigned long lastColorRead = 0;
 unsigned long lastHTTPSend = 0;
 unsigned long lastPrint = 0;
-unsigned long lastBaselineSample = 0;
-const unsigned long BASELINE_SAMPLE_INTERVAL = 1000; // 1 second
-const unsigned long WAIT_FRUIT_DURATION = 15000;     // 15 sec to place fruit
-const unsigned long COMPLETE_WAIT_DURATION = 10000;  // 10 sec before reset
-
-unsigned long waitFruitStart = 0;
-unsigned long completeStart = 0;
 
 /* =====================================================
    INTERVALS
@@ -93,9 +84,9 @@ const unsigned long COLOR_INTERVAL = 5000;
 const unsigned long HTTP_INTERVAL = 10000;
 const unsigned long PRINT_INTERVAL = 2000;
 
-const unsigned long BASELINE_DURATION = 60000;
-const unsigned long STABILIZATION_DURATION = 6000;
-const unsigned long MONITORING_DURATION = 60000;
+const unsigned long BASELINE_DURATION = 600000;
+const unsigned long STABILIZATION_DURATION = 60000;
+const unsigned long MONITORING_DURATION = 600000;
 
 /* =====================================================
    SENSOR VARIABLES
@@ -116,17 +107,6 @@ float gasDifference = 0;
 float vocPercent = 0;
 
 /* =====================================================
-   🆕 ML FEATURES
-===================================================== */
-
-float previousGas = 0;
-float gasRateOfChange = 0;
-
-float gasBuffer[10] = {0};
-int gasIndex = 0;
-float stabilityIndex = 0;
-
-/* =====================================================
    COLOR VARIABLES
 ===================================================== */
 
@@ -138,45 +118,7 @@ int B = 0;
    DATA STORAGE
 ===================================================== */
 
-String jsonArray = "";
-bool hasSamples = false;
-int sampleCount = 0;
-unsigned long lastSampleTime = 0;
-const unsigned long SAMPLE_INTERVAL = 5000; // 5 seconds
-
-String formatCurrentReadingJson()
-{
-  String json = "{";
-
-  json += "\"Red\":" + String(R) + ",";
-  json += "\"Green\":" + String(G) + ",";
-  json += "\"Blue\":" + String(B) + ",";
-
-  json += "\"Temperature\":" + String(temperature, 2) + ",";
-  json += "\"Humidity\":" + String(humidity, 2) + ",";
-  json += "\"Pressure\":" + String(pressure, 2) + ",";
-
-  json += "\"GasResistance\":" + String(smoothedGas, 2) + ",";
-  json += "\"Difference\":" + String(gasDifference, 2) + ",";
-  json += "\"VOC_percent\":" + String(vocPercent, 2) + ",";
-
-  json += "\"GasRate\":" + String(gasRateOfChange, 2) + ",";
-  json += "\"Stability\":" + String(stabilityIndex, 2);
-
-  json += "}";
-  return json;
-}
-
-void addSampleToJsonArray()
-{
-  String sample = formatCurrentReadingJson();
-  if (hasSamples)
-  {
-    jsonArray += ",";
-  }
-  jsonArray += sample;
-  hasSamples = true;
-}
+String storedData = "";
 
 /* =====================================================
    WIFI CONNECT
@@ -185,6 +127,7 @@ void addSampleToJsonArray()
 void connectWiFi()
 {
   Serial.print("Connecting to WiFi");
+
   WiFi.begin(ssid, password);
 
   while (WiFi.status() != WL_CONNECTED)
@@ -207,112 +150,120 @@ void updateBME()
   if (bme.performReading())
   {
     temperature = bme.temperature;
+
     humidity = bme.humidity;
+
     pressure = bme.pressure / 100.0;
+
     gas = bme.gas_resistance / 1000.0;
 
     if (smoothedGas == 0)
-      smoothedGas = gas;
-
-    smoothedGas = (0.9 * smoothedGas) + (0.1 * gas);
-
-    /* Calculate gas rate of change when there's a new reading */
-    gasRateOfChange = smoothedGas - previousGas;
-    previousGas = smoothedGas;
-
-    /* Update buffer with new gas value */
-    gasBuffer[gasIndex] = smoothedGas;
-    gasIndex = (gasIndex + 1) % 10;
-
-    /* Calculate stability from buffer */
-    float sum = 0;
-    for (int i = 0; i < 10; i++)
-      sum += gasBuffer[i];
-    float mean = sum / 10.0;
-
-    float variance = 0;
-    for (int i = 0; i < 10; i++)
     {
-      float diff = gasBuffer[i] - mean;
-      variance += diff * diff;
+      smoothedGas = gas;
     }
 
-    stabilityIndex = sqrt(variance / 10.0); // Use standard deviation instead of variance
+    smoothedGas = (0.9 * smoothedGas) + (0.1 * gas);
   }
 }
 
 /* =====================================================
-   COLOR SENSOR
+   TCS3200 FUNCTIONS
 ===================================================== */
 
 int readColor(bool s2, bool s3)
 {
   digitalWrite(S2, s2);
   digitalWrite(S3, s3);
+
   delay(5);
+
   return pulseIn(sensorOut, LOW, 100000);
 }
 
 int averageRead(bool s2, bool s3)
 {
   long sum = 0;
+
   for (int i = 0; i < 5; i++)
+  {
     sum += readColor(s2, s3);
+  }
+
   return sum / 5;
 }
 
 int mapColor(int value, int minVal, int maxVal)
 {
-  return constrain(map(value, minVal, maxVal, 255, 0), 0, 255);
+  int mapped = map(value, minVal, maxVal, 255, 0);
+
+  return constrain(mapped, 0, 255);
 }
 
 void updateColor()
 {
-  R = mapColor(averageRead(LOW, LOW), redMin, redMax);
-  G = mapColor(averageRead(HIGH, HIGH), greenMin, greenMax);
-  B = mapColor(averageRead(LOW, HIGH), blueMin, blueMax);
+  int redRaw = averageRead(LOW, LOW);
+
+  int greenRaw = averageRead(HIGH, HIGH);
+
+  int blueRaw = averageRead(LOW, HIGH);
+
+  R = mapColor(redRaw, redMin, redMax);
+
+  G = mapColor(greenRaw, greenMin, greenMax);
+
+  B = mapColor(blueRaw, blueMin, blueMax);
 }
 
 /* =====================================================
    SEND TO SERVER
 ===================================================== */
+
 void sendToServer()
 {
-  if (!hasSamples)
-  {
-    Serial.println("No samples to send.");
-    return;
-  }
-
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("WiFi disconnected!");
     connectWiFi();
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      Serial.println("Cannot send, WiFi still disconnected.");
-      return;
-    }
+    return;
   }
 
   HTTPClient http;
 
+  http.setTimeout(2000);
+
   http.begin(server);
+
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-API-Key", apiKey);
 
-  String payload = "[" + jsonArray + "]";
+  String json = "{";
 
-  Serial.println("Sending payload:");
-  Serial.println(payload);
+  json += "\"Red\":" + String(R) + ",";
+  json += "\"Green\":" + String(G) + ",";
+  json += "\"Blue\":" + String(B) + ",";
 
-  int httpCode = http.POST(payload);
+  json += "\"Temperature\":" + String(temperature, 2) + ",";
+  json += "\"Humidity\":" + String(humidity, 2) + ",";
+  json += "\"Pressure\":" + String(pressure, 2) + ",";
+
+  json += "\"GasResistance\":" + String(smoothedGas, 2) + ",";
+
+  json += "\"Difference\":" + String(gasDifference, 2) + ",";
+
+  json += "\"VOC_percent\":" + String(vocPercent, 2);
+
+  json += "}";
+
+  Serial.println("\nSENDING JSON:");
+  Serial.println(json);
+
+  int httpCode = http.POST(json);
 
   Serial.print("HTTP CODE: ");
   Serial.println(httpCode);
+
   if (httpCode > 0)
   {
     String response = http.getString();
+
     Serial.println("SERVER RESPONSE:");
     Serial.println(response);
   }
@@ -325,38 +276,83 @@ void sendToServer()
 }
 
 /* =====================================================
-   PRINT DATA
+   SAVE DATA
+===================================================== */
+
+void saveData()
+{
+  String row = "";
+
+  row += String(R);
+  row += ",";
+
+  row += String(G);
+  row += ",";
+
+  row += String(B);
+  row += ",";
+
+  row += String(temperature, 2);
+  row += ",";
+
+  row += String(humidity, 2);
+  row += ",";
+
+  row += String(pressure, 2);
+  row += ",";
+
+  row += String(smoothedGas, 2);
+  row += ",";
+
+  row += String(gasDifference, 2);
+  row += ",";
+
+  row += String(vocPercent, 2);
+
+  storedData += row + "\n";
+}
+
+/* =====================================================
+   PRINT SENSOR DATA
 ===================================================== */
 
 void printData()
 {
   Serial.println("\n========================");
-  Serial.println("R: " + String(R));
-  Serial.println("G: " + String(G));
-  Serial.println("B: " + String(B));
-  Serial.println("Temp: " + String(temperature));
-  Serial.println("Humidity: " + String(humidity));
-  Serial.println("Pressure: " + String(pressure));
-  Serial.println("Raw Gas: " + String(gas, 2));
-  Serial.println("Smoothed Gas: " + String(smoothedGas, 2));
-  Serial.println("Previous Gas: " + String(previousGas, 2));
-  Serial.println("Diff: " + String(gasDifference, 2));
-  Serial.println("VOC%: " + String(vocPercent, 2));
-  Serial.println("Rate (change/sec): " + String(gasRateOfChange, 4));
-  Serial.println("Stability (stddev): " + String(stabilityIndex, 4));
-  Serial.print("Gas Buffer: ");
-  for (int i = 0; i < 10; i++)
-  {
-    Serial.print(gasBuffer[i], 2);
-    if (i < 9)
-      Serial.print(", ");
-  }
-  Serial.println();
-  Serial.println("========================\n");
+
+  Serial.print("R: ");
+  Serial.println(R);
+
+  Serial.print("G: ");
+  Serial.println(G);
+
+  Serial.print("B: ");
+  Serial.println(B);
+
+  Serial.print("Temperature: ");
+  Serial.println(temperature);
+
+  Serial.print("Humidity: ");
+  Serial.println(humidity);
+
+  Serial.print("Pressure: ");
+  Serial.println(pressure);
+
+  Serial.print("Raw Gas: ");
+  Serial.println(gas);
+
+  Serial.print("Smoothed Gas: ");
+  Serial.println(smoothedGas);
+
+  Serial.print("Difference: ");
+  Serial.println(gasDifference);
+
+  Serial.print("VOC %: ");
+  Serial.println(vocPercent);
 }
 
 /* =====================================================
-   RESET
+   RESET SESSION
 ===================================================== */
 
 void resetSession()
@@ -367,36 +363,37 @@ void resetSession()
 
   gasDifference = 0;
   vocPercent = 0;
-  smoothedGas = 0;
-  gas = 0;
 
-  previousGas = 0;
-  gasIndex = 0;
-  stabilityIndex = 0;
-
-  jsonArray = "";
-  hasSamples = false;
-  sampleCount = 0;
-  lastSampleTime = 0;
+  storedData = "";
 
   baselineStart = millis();
+
   currentState = BASELINE;
 
-  Serial.println("NEW SESSION");
+  Serial.println("\nNEW SESSION STARTED");
   Serial.println("REMOVE FRUIT");
 }
 
 /* =====================================================
-   SETUP (unchanged parts omitted for brevity)
+   SETUP
 ===================================================== */
 
 void setup()
 {
   Serial.begin(115200);
+
+  /* ---------------- WIFI ---------------- */
+
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
+
   connectWiFi();
+
+  /* ---------------- I2C ---------------- */
+
   Wire.begin(SDA_PIN, SCL_PIN);
+
+  /* ---------------- TCS3200 ---------------- */
 
   pinMode(S0, OUTPUT);
   pinMode(S1, OUTPUT);
@@ -408,13 +405,18 @@ void setup()
   digitalWrite(S0, HIGH);
   digitalWrite(S1, LOW);
 
+  /* ---------------- BME680 ---------------- */
+
   if (!bme.begin(0x76))
+  {
     if (!bme.begin(0x77))
     {
       Serial.println("BME680 NOT FOUND");
-      while (1)
-        ;
+
+      while (1);
     }
+  }
+
   bme.setTemperatureOversampling(BME680_OS_8X);
 
   bme.setHumidityOversampling(BME680_OS_2X);
@@ -452,14 +454,30 @@ void loop()
   }
 
   /* =====================================================
-     ALWAYS RUN COLOR SENSOR
+     SERIAL COMMANDS
   ===================================================== */
 
-  if (millis() - lastColorRead >= COLOR_INTERVAL)
+  if (Serial.available())
   {
-    lastColorRead = millis();
+    char input = Serial.read();
 
-    updateColor();
+    if (input == 'r')
+    {
+      resetSession();
+    }
+
+    if (input == '1')
+    {
+      if (currentState == WAIT_FRUIT)
+      {
+        stabilizationStart = millis();
+
+        currentState = STABILIZING;
+
+        Serial.println("\nFRUIT DETECTED");
+        Serial.println("STABILIZING FOR 60 SECONDS");
+      }
+    }
   }
 
   /* =====================================================
@@ -468,49 +486,30 @@ void loop()
 
   if (currentState == BASELINE)
   {
-    if (millis() - lastBaselineSample >= BASELINE_SAMPLE_INTERVAL)
-    {
-      lastBaselineSample = millis();
+    baselineSum += smoothedGas;
 
-      baselineSum += gas;
-      baselineCount++;
+    baselineCount++;
+
+    if (millis() - lastPrint >= PRINT_INTERVAL)
+    {
+      lastPrint = millis();
 
       Serial.print("BASELINE GAS: ");
-      Serial.println(gas);
+      Serial.println(smoothedGas);
     }
 
     if (millis() - baselineStart >= BASELINE_DURATION)
     {
-
-      baselineGas = gas;
+      baselineGas = baselineSum / baselineCount;
 
       currentState = WAIT_FRUIT;
 
-      waitFruitStart = millis();
-
       Serial.println("\nBASELINE COMPLETE");
+
       Serial.print("BASELINE AVERAGE: ");
       Serial.println(baselineGas);
 
-      Serial.println("PLACE FRUIT NOW");
-      Serial.println("WAITING 30 SECONDS...");
-    }
-  }
-
-  /* =====================================================
-     WAIT FOR FRUIT
-  ===================================================== */
-
-  if (currentState == WAIT_FRUIT)
-  {
-    if (millis() - waitFruitStart >= WAIT_FRUIT_DURATION)
-    {
-      stabilizationStart = millis();
-
-      currentState = STABILIZING;
-
-      Serial.println("\nSTABILIZATION STARTED");
-      Serial.println("WAITING 60 SECONDS...");
+      Serial.println("PLACE FRUIT AND SEND 1");
     }
   }
 
@@ -525,7 +524,7 @@ void loop()
       lastPrint = millis();
 
       Serial.print("STABILIZING GAS: ");
-      Serial.println(gas);
+      Serial.println(smoothedGas);
     }
 
     if (millis() - stabilizationStart >= STABILIZATION_DURATION)
@@ -533,14 +532,6 @@ void loop()
       monitoringStart = millis();
 
       currentState = MONITORING;
-
-      /* initialize stability buffer */
-      for (int i = 0; i < 10; i++)
-      {
-        gasBuffer[i] = gas;
-      }
-
-      previousGas = gas;
 
       Serial.println("\nMONITORING STARTED");
     }
@@ -552,28 +543,37 @@ void loop()
 
   if (currentState == MONITORING)
   {
-    gasDifference = baselineGas - gas;
+    gasDifference = baselineGas - smoothedGas;
 
-    vocPercent = (baselineGas != 0)
-                     ? gasDifference / baselineGas
-                     : 0;
-
-    /* Print periodic debug info */
-
-    if (millis() - lastPrint >= PRINT_INTERVAL)
+    if (baselineGas != 0)
     {
-      lastPrint = millis();
+      vocPercent = gasDifference / baselineGas;
+    }
+    else
+    {
+      vocPercent = 0;
+    }
+
+    /* ---------------- COLOR UPDATE ---------------- */
+
+    if (millis() - lastColorRead >= COLOR_INTERVAL)
+    {
+      lastColorRead = millis();
+
+      updateColor();
+
+      saveData();
 
       printData();
     }
 
-    if (millis() - lastSampleTime >= SAMPLE_INTERVAL)
+    /* ---------------- HTTP SEND ---------------- */
+
+    if (millis() - lastHTTPSend >= HTTP_INTERVAL)
     {
-      lastSampleTime = millis();
-      addSampleToJsonArray();
-      sampleCount++;
-      Serial.print("Sample added, total count: ");
-      Serial.println(sampleCount);
+      lastHTTPSend = millis();
+
+      sendToServer();
     }
 
     /* ---------------- MONITORING COMPLETE ---------------- */
@@ -582,30 +582,12 @@ void loop()
     {
       currentState = COMPLETE;
 
-      completeStart = millis();
-
       Serial.println("\nMONITORING COMPLETE");
 
       Serial.println("\nSTORED DATA:");
+      Serial.println(storedData);
 
-      sendToServer();
-
-      Serial.print("Total samples sent: ");
-      Serial.println(sampleCount);
-
-      Serial.println("AUTO RESET IN 15 SECONDS");
-    }
-  }
-
-  /* =====================================================
-     COMPLETE STATE
-  ===================================================== */
-
-  if (currentState == COMPLETE)
-  {
-    if (millis() - completeStart >= COMPLETE_WAIT_DURATION)
-    {
-      resetSession();
+      Serial.println("SEND r FOR NEW SESSION");
     }
   }
 }

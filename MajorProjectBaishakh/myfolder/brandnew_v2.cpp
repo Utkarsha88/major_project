@@ -93,9 +93,9 @@ const unsigned long COLOR_INTERVAL = 5000;
 const unsigned long HTTP_INTERVAL = 10000;
 const unsigned long PRINT_INTERVAL = 2000;
 
-const unsigned long BASELINE_DURATION = 60000;
-const unsigned long STABILIZATION_DURATION = 6000;
-const unsigned long MONITORING_DURATION = 60000;
+const unsigned long BASELINE_DURATION = 120000;
+const unsigned long STABILIZATION_DURATION = 60000;
+const unsigned long MONITORING_DURATION = 600000;
 
 /* =====================================================
    SENSOR VARIABLES
@@ -138,45 +138,9 @@ int B = 0;
    DATA STORAGE
 ===================================================== */
 
-String jsonArray = "";
-bool hasSamples = false;
-int sampleCount = 0;
-unsigned long lastSampleTime = 0;
-const unsigned long SAMPLE_INTERVAL = 5000; // 5 seconds
+String storedData = "";
 
-String formatCurrentReadingJson()
-{
-  String json = "{";
-
-  json += "\"Red\":" + String(R) + ",";
-  json += "\"Green\":" + String(G) + ",";
-  json += "\"Blue\":" + String(B) + ",";
-
-  json += "\"Temperature\":" + String(temperature, 2) + ",";
-  json += "\"Humidity\":" + String(humidity, 2) + ",";
-  json += "\"Pressure\":" + String(pressure, 2) + ",";
-
-  json += "\"GasResistance\":" + String(smoothedGas, 2) + ",";
-  json += "\"Difference\":" + String(gasDifference, 2) + ",";
-  json += "\"VOC_percent\":" + String(vocPercent, 2) + ",";
-
-  json += "\"GasRate\":" + String(gasRateOfChange, 2) + ",";
-  json += "\"Stability\":" + String(stabilityIndex, 2);
-
-  json += "}";
-  return json;
-}
-
-void addSampleToJsonArray()
-{
-  String sample = formatCurrentReadingJson();
-  if (hasSamples)
-  {
-    jsonArray += ",";
-  }
-  jsonArray += sample;
-  hasSamples = true;
-}
+void saveData();
 
 /* =====================================================
    WIFI CONNECT
@@ -238,6 +202,10 @@ void updateBME()
     }
 
     stabilityIndex = sqrt(variance / 10.0); // Use standard deviation instead of variance
+    if (currentState == MONITORING)
+    {
+      saveData();
+    }
   }
 }
 
@@ -276,23 +244,14 @@ void updateColor()
 /* =====================================================
    SEND TO SERVER
 ===================================================== */
+
 void sendToServer()
 {
-  if (!hasSamples)
-  {
-    Serial.println("No samples to send.");
-    return;
-  }
-
   if (WiFi.status() != WL_CONNECTED)
   {
     Serial.println("WiFi disconnected!");
     connectWiFi();
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      Serial.println("Cannot send, WiFi still disconnected.");
-      return;
-    }
+    return;
   }
 
   HTTPClient http;
@@ -301,18 +260,36 @@ void sendToServer()
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-API-Key", apiKey);
 
-  String payload = "[" + jsonArray + "]";
+  String json = "{";
 
-  Serial.println("Sending payload:");
-  Serial.println(payload);
+  json += "\"Red\":" + String(R) + ",";
+  json += "\"Green\":" + String(G) + ",";
+  json += "\"Blue\":" + String(B) + ",";
 
-  int httpCode = http.POST(payload);
+  json += "\"Temperature\":" + String(temperature, 2) + ",";
+  json += "\"Humidity\":" + String(humidity, 2) + ",";
+  json += "\"Pressure\":" + String(pressure, 2) + ",";
+
+  json += "\"GasResistance\":" + String(smoothedGas, 2) + ",";
+  json += "\"Difference\":" + String(gasDifference, 2) + ",";
+  json += "\"VOC_percent\":" + String(vocPercent, 2) + ",";
+
+  /* 🆕 ML FEATURES */
+  json += "\"GasRate\":" + String(gasRateOfChange, 2) + ",";
+  json += "\"Stability\":" + String(stabilityIndex, 2);
+
+  json += "}";
+
+  Serial.println("Sending: " + json);
+
+  int httpCode = http.POST(json);
 
   Serial.print("HTTP CODE: ");
   Serial.println(httpCode);
   if (httpCode > 0)
   {
     String response = http.getString();
+
     Serial.println("SERVER RESPONSE:");
     Serial.println(response);
   }
@@ -322,6 +299,29 @@ void sendToServer()
   }
 
   http.end();
+}
+
+/* =====================================================
+   SAVE DATA
+===================================================== */
+
+void saveData()
+{
+  String row = "";
+
+  row += String(R) + ",";
+  row += String(G) + ",";
+  row += String(B) + ",";
+  row += String(temperature, 2) + ",";
+  row += String(humidity, 2) + ",";
+  row += String(pressure, 2) + ",";
+  row += String(smoothedGas, 2) + ",";
+  row += String(gasDifference, 2) + ",";
+  row += String(vocPercent, 2) + ",";
+  row += String(gasRateOfChange, 2) + ",";
+  row += String(stabilityIndex, 2);
+
+  storedData += row + "\n";
 }
 
 /* =====================================================
@@ -374,11 +374,7 @@ void resetSession()
   gasIndex = 0;
   stabilityIndex = 0;
 
-  jsonArray = "";
-  hasSamples = false;
-  sampleCount = 0;
-  lastSampleTime = 0;
-
+  storedData = "";
   baselineStart = millis();
   currentState = BASELINE;
 
@@ -565,16 +561,13 @@ void loop()
       lastPrint = millis();
 
       printData();
+
+      saveData();
     }
 
-    if (millis() - lastSampleTime >= SAMPLE_INTERVAL)
-    {
-      lastSampleTime = millis();
-      addSampleToJsonArray();
-      sampleCount++;
-      Serial.print("Sample added, total count: ");
-      Serial.println(sampleCount);
-    }
+    /* ---------------- HTTP SEND ---------------- */
+
+    //
 
     /* ---------------- MONITORING COMPLETE ---------------- */
 
@@ -590,8 +583,7 @@ void loop()
 
       sendToServer();
 
-      Serial.print("Total samples sent: ");
-      Serial.println(sampleCount);
+      Serial.println(storedData);
 
       Serial.println("AUTO RESET IN 15 SECONDS");
     }
