@@ -10,11 +10,11 @@
    WIFI
 ===================================================== */
 
-const char *ssid = "nrb116_fpkhr";
-const char *password = "Acharya116@";
+const char *ssid = "UTKARSH";
+const char *password = "password";
 
 const char *server =
-    "http://192.168.1.88:5000/api/v1/sensor-data";
+    "https://fruit-pulse-backend.onrender.com/api/v1/sensor-data";
 const char *apiKey = "major-project-secret-key873468734r";
 
 /* =====================================================
@@ -162,7 +162,7 @@ String formatCurrentReadingJson()
 
   json += "\"GasResistance\":" + String(smoothedGas, 2) + ",";
   json += "\"Difference\":" + String(gasDifference, 2) + ",";
-  json += "\"VOC_percent\":" + String(vocPercent, 2) + ",";
+  json += "\"VOC%\":" + String(vocPercent, 2);
 
   // json += "\"GasRate\":" + String(gasRateOfChange, 2) + ",";
   // json += "\"Stability\":" + String(stabilityIndex, 2);
@@ -233,6 +233,7 @@ void connectWiFi()
 
   Serial.println("\nWiFi Connected");
   Serial.print("ESP32 IP: ");
+  Serial.print("------------Press Button to Start Baseline---------------");
   Serial.println(WiFi.localIP());
 }
 
@@ -323,6 +324,8 @@ void sendToServer()
   HTTPClient http;
 
   http.begin(server);
+  Serial.print("server is beginning to send data to: ");
+  
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-API-Key", apiKey);
 
@@ -332,6 +335,7 @@ void sendToServer()
   Serial.println(payload);
 
   int httpCode = http.POST(payload);
+  
 
   Serial.print("HTTP CODE: ");
   Serial.println(httpCode);
@@ -551,7 +555,7 @@ void loop()
       waitFruitStart = millis();
 
       Serial.println("\nBASELINE COMPLETE");
-      Serial.print("BASELINE AVERAGE: ");
+      Serial.print("FINAL BASELINE : ");
       Serial.println(baselineGas);
 
       Serial.println("PLACE FRUIT NOW");
