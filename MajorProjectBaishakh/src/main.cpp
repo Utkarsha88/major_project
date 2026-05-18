@@ -94,9 +94,9 @@ const unsigned long COLOR_INTERVAL = 5000;
 const unsigned long HTTP_INTERVAL = 10000;
 const unsigned long PRINT_INTERVAL = 2000;
 
-const unsigned long BASELINE_DURATION = 300000;
-const unsigned long STABILIZATION_DURATION = 30000;
-const unsigned long MONITORING_DURATION = 600000; // 10 minutes
+const unsigned long BASELINE_DURATION =240000; // 4 minutes
+const unsigned long STABILIZATION_DURATION = 30000; // 30 seconds
+const unsigned long MONITORING_DURATION = 420000; // 7 minutes
 bool systemEnabled = false;
 
 /* =====================================================
