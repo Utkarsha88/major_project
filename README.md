@@ -1,4 +1,4 @@
-# 🍌 Fruit Quality Monitoring & Classification System
+# 🍌 IOT-Based Chemical and Ripeness Detection in Fruits using Machine Learning.
 
 > **An IoT + Machine Learning system for non-destructive fruit quality assessment using environmental, gas-response, and color information.**
 
